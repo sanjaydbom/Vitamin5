@@ -6,6 +6,8 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+#include "filesys/filesys.h"
+
 static void syscall_handler(struct intr_frame *);
 
 void syscall_init(void) {
@@ -36,4 +38,49 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         putbuf(args[2], args[3]);
         f->eax = args[3];
     }
+    else if(args[0] == SYS_CREATE) {
+        f->eax = filesys_create(args[1], args[2]);
+    }
+    else if(args[0] == SYS_REMOVE) {
+        f->eax = filesys_remove(args[1]);
+    }
+    else if(args[0] == SYS_OPEN) {
+        if(args[1] == NULL)
+            process_exit(-1);
+        struct thread* current_thread = thread_current();
+        bool valid = false;
+        for(int i = 0; i < 128; i++) {
+            if(current_thread->fdt[i] == NULL){
+                current_thread->fdt[i] = filesys_open(args[1]);
+                if(current_thread->fdt[i] == NULL)
+                    process_exit(-1);
+                else{
+                    f->eax = i+2;
+                    valid = true;
+                    i = 128;
+                }
+            }
+        }
+        if(!valid)
+            process_exit(-1);
+    }
+    else if(args[0] == SYS_FILESIZE) {
+        if(args[1] < 2 || args[1] > 129)
+            process_exit(-1);
+
+        struct thread* current_thread = thread_current();
+        if(current_thread->fdt[args[1]] == NULL)
+            process_exit(-1);
+        else
+            f->eax = file_length(current_thread->fdt[args[1]]);
+    }
+    /*else if(args[0] == SYS_READ) {
+        if(args[1] < 2 || args[1] > 129)
+            f->eax = -1;
+        struct thread* current_thread = thread_current();
+        if(current_thread->fdt[args[1]] == NULL)
+            f->eax = -1;
+        else
+            f->eax = file_read(current_thread->fdt[args[1]], args[2], args[3]);
+    }*/
 }
