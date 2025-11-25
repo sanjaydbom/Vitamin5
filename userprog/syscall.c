@@ -8,6 +8,8 @@
 
 #include "filesys/filesys.h"
 
+#include "devices/shutdown.h"
+
 static void syscall_handler(struct intr_frame *);
 
 void syscall_init(void) {
@@ -34,10 +36,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     else if (args[0] == SYS_INCREMENT) {
         f->eax = args[1] + 1;
     }
-    else if(args[0] == SYS_WRITE) {
+    /*else if(args[0] == SYS_WRITE) {
         putbuf(args[2], args[3]);
         f->eax = args[3];
-    }
+    }*/
     else if(args[0] == SYS_CREATE) {
         f->eax = filesys_create(args[1], args[2]);
     }
@@ -69,18 +71,72 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             process_exit(-1);
 
         struct thread* current_thread = thread_current();
-        if(current_thread->fdt[args[1]] == NULL)
+        if(current_thread->fdt[args[1] - 2] == NULL)
             process_exit(-1);
         else
-            f->eax = file_length(current_thread->fdt[args[1]]);
+            f->eax = file_length(current_thread->fdt[args[1] - 2]);
     }
-    /*else if(args[0] == SYS_READ) {
-        if(args[1] < 2 || args[1] > 129)
+    else if(args[0] == SYS_READ) {
+        if(args[1] -2 < 0 || args[1] - 2 > 127)
+            f->eax = -1;
+        else {
+            struct thread* current_thread = thread_current();
+            if(current_thread->fdt[args[1] - 2] == NULL)
+                f->eax = -1;
+            else
+                f->eax = file_read(current_thread->fdt[args[1]-2], args[2], args[3]);
+        }
+    }
+    else if(args[0] == SYS_WRITE) {
+        if(args[1] == 1) {
+            putbuf(args[2], args[3]);
+            f->eax = args[3];
+        }
+        else {
+            if(args[1] -2 < 0 || args[1] - 2 > 127)
+                f->eax = -1;
+            else {
+                struct thread* current_thread = thread_current();
+                if(current_thread->fdt[args[1] - 2] == NULL)
+                    f->eax = -1;
+                else
+                    f->eax = file_write(current_thread->fdt[args[1]-2], args[2], args[3]);
+            }
+        }
+    }
+    /*else if(args[0] == SYS_SEEK) {
+        if(args[1] -2 < 0 || args[1] - 2 > 127)
             f->eax = -1;
         struct thread* current_thread = thread_current();
-        if(current_thread->fdt[args[1]] == NULL)
+        if(current_thread->fdt[args[1] - 2] == NULL)
+            f->eax = -1;
+        else {
+            file_seek(current_thread->fdt[args[1]-2], args[2]);
+            f->eax = NULL;
+        }
+    }
+    else if(args[0] == SYS_TELL) {
+        if(args[1] -2 < 0 || args[1] - 2 > 127)
+            f->eax = -1;
+        struct thread* current_thread = thread_current();
+        if(current_thread->fdt[args[1] - 2] == NULL)
             f->eax = -1;
         else
-            f->eax = file_read(current_thread->fdt[args[1]], args[2], args[3]);
+            f->eax = file_tell(current_thread->fdt[args[1]-2]);
+    }
+    else if(args[0] == SYS_CLOSE) {
+        if(args[1] -2 < 0 || args[1] - 2 > 127)
+            f->eax = -1;
+        struct thread* current_thread = thread_current();
+        if(current_thread->fdt[args[1] - 2] == NULL)
+            f->eax = -1;
+        else {
+            file_close(current_thread->fdt[args[1]-2]);
+            current_thread->fdt[args[1]-2] = NULL;
+            f->eax = NULL;
+        }
+    }
+    else if(args[0] == SYS_HALT) {
+        shutdown_power_off();
     }*/
 }
