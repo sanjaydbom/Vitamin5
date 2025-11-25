@@ -48,14 +48,14 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     }
     else if(args[0] == SYS_OPEN) {
         if(args[1] == NULL)
-            process_exit(-1);
+            f->eax = -1;
         struct thread* current_thread = thread_current();
         bool valid = false;
         for(int i = 0; i < 128; i++) {
             if(current_thread->fdt[i] == NULL){
                 current_thread->fdt[i] = filesys_open(args[1]);
                 if(current_thread->fdt[i] == NULL)
-                    process_exit(-1);
+                    f->eax=-1;
                 else{
                     f->eax = i+2;
                     valid = true;
@@ -64,15 +64,15 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
         if(!valid)
-            process_exit(-1);
+            f->eax = -1;
     }
     else if(args[0] == SYS_FILESIZE) {
         if(args[1] < 2 || args[1] > 129)
-            process_exit(-1);
+            f->eax = -1;
 
         struct thread* current_thread = thread_current();
         if(current_thread->fdt[args[1] - 2] == NULL)
-            process_exit(-1);
+            f->eax = -1;
         else
             f->eax = file_length(current_thread->fdt[args[1] - 2]);
     }
@@ -104,7 +104,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
         }
     }
-    /*else if(args[0] == SYS_SEEK) {
+    else if(args[0] == SYS_SEEK) {
         if(args[1] -2 < 0 || args[1] - 2 > 127)
             f->eax = -1;
         struct thread* current_thread = thread_current();
@@ -125,18 +125,24 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             f->eax = file_tell(current_thread->fdt[args[1]-2]);
     }
     else if(args[0] == SYS_CLOSE) {
-        if(args[1] -2 < 0 || args[1] - 2 > 127)
-            f->eax = -1;
-        struct thread* current_thread = thread_current();
-        if(current_thread->fdt[args[1] - 2] == NULL)
-            f->eax = -1;
+        if(args[0] == 0 || args[0] == 1)
+            ;
         else {
-            file_close(current_thread->fdt[args[1]-2]);
-            current_thread->fdt[args[1]-2] = NULL;
-            f->eax = NULL;
+            if(args[1] -2 < 0 || args[1] - 2 > 127)
+                f->eax = -1;
+            else {
+                struct thread* current_thread = thread_current();
+                if(current_thread->fdt[args[1] - 2] == NULL)
+                    f->eax = -1;
+                else {
+                    file_close(current_thread->fdt[args[1]-2]);
+                    current_thread->fdt[args[1]-2] = NULL;
+                    f->eax = NULL;
+                }
+            }
         }
     }
     else if(args[0] == SYS_HALT) {
         shutdown_power_off();
-    }*/
+    }
 }
