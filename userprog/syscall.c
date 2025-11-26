@@ -248,6 +248,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 else if(!g->is_alive){
                     f->eax = g->exit_status;
                     list_remove(&(g->elem));
+                    free(g);
                     return;
                 }
                 else {
@@ -255,6 +256,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     sema_down(&(g->lock));
                     f->eax = g->exit_status;
                     list_remove(&(g->elem));
+                    free(g);
                     return;
                 }
             }

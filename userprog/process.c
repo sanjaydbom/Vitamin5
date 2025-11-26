@@ -152,7 +152,6 @@ static void start_process(void *file_name_) {
             sema_up(&(thread_current()->parent_process->lock));
         }
         thread_exit();
-        thread_exit();
     }
 
     /* Start the user process by simulating a return from an
@@ -182,6 +181,26 @@ int process_wait(tid_t child_tid UNUSED) {
 /* Free the current process's resources. */
 void process_exit(void) {
     struct thread *cur = thread_current();
+    if(cur->executable != NULL){
+        file_close(cur->executable);
+    }
+    for (int i = 0; i < 128; i++) {
+        if (cur->fdt[i] != NULL) {
+            file_close(cur->fdt[i]);
+            cur->fdt[i] = NULL;
+        }
+    }
+    struct list_elem* e = list_begin(&(cur->child_processes));
+    struct list_elem* next;
+    while (e != list_end(&(cur->child_processes))) {
+        next = list_next(e);
+        struct child_struct *child_status = list_entry(e, struct child_struct, elem);
+
+        list_remove(&(child_status->elem));
+        free(child_status);
+
+        e = next;
+    }
     uint32_t *pd;
 
     /* Destroy the current process's page directory and switch back
@@ -381,6 +400,10 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
 done:
     /* We arrive here whether the load is successful or not. */
     file_close(file);
+    if(success){
+        t->executable = filesys_open(file_name);
+        file_deny_write(t->executable);
+    }
     if(t->parent_process != NULL){
         t->parent_process->load = success;
         sema_up(&(t->parent_process->load_lock));
