@@ -144,8 +144,16 @@ static void start_process(void *file_name_) {
 
     /* If load failed, quit. */
     palloc_free_page(file_name);
-    if (!success)
+    if (!success){
+        printf("%s: exit(-1)\n", thread_current()->name);
+        if(thread_current()->parent_process != NULL){
+            thread_current()->parent_process->exit_status = -1;
+            thread_current()->parent_process->is_alive = false;
+            sema_up(&(thread_current()->parent_process->lock));
+        }
         thread_exit();
+        thread_exit();
+    }
 
     /* Start the user process by simulating a return from an
        interrupt, implemented by intr_exit (in
@@ -373,6 +381,10 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
 done:
     /* We arrive here whether the load is successful or not. */
     file_close(file);
+    if(t->parent_process != NULL){
+        t->parent_process->load = success;
+        sema_up(&(t->parent_process->load_lock));
+    }
     return success;
 }
 
@@ -511,4 +523,55 @@ static bool install_page(void *upage, void *kpage, bool writable) {
        address, then map our page there. */
     return (pagedir_get_page(t->pagedir, upage) == NULL &&
             pagedir_set_page(t->pagedir, upage, kpage, writable));
+}
+
+tid_t child_process_execute(const char *file_name) {
+        struct child_struct* cs = (struct child_struct*) malloc(sizeof(struct child_struct));
+        char *fn_copy;
+        tid_t tid;
+
+        /* Make a copy of FILE_NAME.
+        Otherwise there's a race between the caller and load(). */
+        fn_copy = palloc_get_page(0);
+        if (fn_copy == NULL)
+            return TID_ERROR;
+        strlcpy(fn_copy, file_name, PGSIZE);
+
+        char *save_ptr;
+        char *exec_name = palloc_get_page(0);
+        if(exec_name == NULL) 
+            return TID_ERROR;
+
+        strlcpy(exec_name, file_name, PGSIZE);
+        exec_name = strtok_r(exec_name, " ", &save_ptr);
+
+        struct thread* child_thread = child_thread_create(exec_name, PRI_DEFAULT, start_process, fn_copy, false);
+        if(child_thread == NULL)
+            return TID_ERROR;
+
+        cs->pid = child_thread->tid;
+        cs->exit_status = -1;
+        sema_init(&(cs->lock), 0);
+        sema_init(&(cs->load_lock), 0);
+        cs->is_alive = true;
+        cs->is_waited_on = false;
+        cs->load = false;
+        struct thread *parent_thread = thread_current();
+        list_push_back(&(parent_thread->child_processes), &(cs->elem));
+
+        child_thread->parent_process = cs;
+
+        thread_unblock(child_thread);
+        sema_down(&(cs->load_lock));
+
+        palloc_free_page(exec_name);
+        if (child_thread == NULL){
+            palloc_free_page(fn_copy);
+        }
+        if(cs->load == false)
+        {
+            return TID_ERROR;
+        }
+
+        return child_thread->tid;
 }

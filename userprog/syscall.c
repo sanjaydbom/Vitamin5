@@ -1,12 +1,15 @@
 #include "userprog/syscall.h"
 #include "userprog/pagedir.h"
+#include "userprog/process.h"
 
 #include <stdio.h>
 #include <syscall-nr.h>
+#include <stdlib.h>
 
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
 #include "filesys/filesys.h"
 
@@ -19,9 +22,19 @@ void syscall_init(void) {
 }
 bool validate_user_buffer(void *pointer, size_t length, bool check_writable);
 bool validate_user_string(const char *string);
+bool is_valid_user_read(const void *uaddr, size_t size) ;
 
 static void syscall_handler(struct intr_frame *f UNUSED) {
     uint32_t *args = ((uint32_t *) f->esp);
+    if (!is_valid_user_read(args, sizeof(uint32_t) * 2)) {
+        printf("%s: exit(-1)\n", thread_current()->name);
+        if(thread_current()->parent_process != NULL){
+            thread_current()->parent_process->exit_status = f->eax;
+            thread_current()->parent_process->is_alive = false;
+            sema_up(&(thread_current()->parent_process->lock));
+        }
+        thread_exit();
+}
 
     /*
      * The following print statement, if uncommented, will print out the syscall
@@ -35,21 +48,27 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     if (args[0] == SYS_EXIT) {
         f->eax = args[1];
         printf("%s: exit(%d)\n", thread_current()->name, args[1]);
+        if(thread_current()->parent_process != NULL){
+            thread_current()->parent_process->exit_status = f->eax;
+            thread_current()->parent_process->is_alive = false;
+            sema_up(&(thread_current()->parent_process->lock));
+        }
         thread_exit();
     }
     else if (args[0] == SYS_INCREMENT) {
         f->eax = args[1] + 1;
     }
-    /*else if(args[0] == SYS_WRITE) {
-        putbuf(args[2], args[3]);
-        f->eax = args[3];
-    }*/
     else if(args[0] == SYS_CREATE) {
         if(validate_user_string(args[1]))
             f->eax = filesys_create(args[1], args[2]);
         else {
             f->eax = -1;
             printf("%s: exit(-1)\n", thread_current()->name);
+            if(thread_current()->parent_process != NULL){
+                thread_current()->parent_process->exit_status = f->eax;
+                thread_current()->parent_process->is_alive = false;
+                sema_up(&(thread_current()->parent_process->lock));
+            }
             thread_exit();
         }
             
@@ -60,6 +79,11 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         else {
             f->eax = -1;
             printf("%s: exit(-1)\n", thread_current()->name);
+            if(thread_current()->parent_process != NULL){
+                thread_current()->parent_process->exit_status = f->eax;
+                thread_current()->parent_process->is_alive = false;
+                sema_up(&(thread_current()->parent_process->lock));
+            }
             thread_exit();
         }
     }
@@ -86,6 +110,11 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         else{
             f->eax = -1;
             printf("%s: exit(-1)\n", thread_current()->name);
+            if(thread_current()->parent_process != NULL){
+                thread_current()->parent_process->exit_status = f->eax;
+                thread_current()->parent_process->is_alive = false;
+                sema_up(&(thread_current()->parent_process->lock));
+            }
             thread_exit();
         }
     }
@@ -113,6 +142,11 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             else{  
                 f->eax = -1;
                 printf("%s: exit(-1)\n", thread_current()->name);
+                if(thread_current()->parent_process != NULL){
+                    thread_current()->parent_process->exit_status = f->eax;
+                    thread_current()->parent_process->is_alive = false;
+                    sema_up(&(thread_current()->parent_process->lock));
+                }
                 thread_exit();
             }
         }
@@ -133,7 +167,16 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     else
                         f->eax = file_write(current_thread->fdt[args[1]-2], args[2], args[3]);
                 }
-                else f->eax = -1;
+                else{
+                    f->eax = -1;
+                    printf("%s: exit(-1)\n", thread_current()->name);
+                    if(thread_current()->parent_process != NULL){
+                        thread_current()->parent_process->exit_status = f->eax;
+                        thread_current()->parent_process->is_alive = false;
+                        sema_up(&(thread_current()->parent_process->lock));
+                    }
+                    thread_exit();
+                }
             }
         }
     }
@@ -178,6 +221,20 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     else if(args[0] == SYS_HALT) {
         shutdown_power_off();
     }
+    else if(args[0] == SYS_EXEC) {
+        if(!validate_user_string(args[1])){
+            f->eax = -1;
+            printf("%s: exit(-1)\n", thread_current()->name);
+            if(thread_current()->parent_process != NULL){
+                thread_current()->parent_process->exit_status = f->eax;
+                thread_current()->parent_process->is_alive = false;
+                sema_up(&(thread_current()->parent_process->lock));
+            }
+            thread_exit();
+        } else {
+            f->eax = child_process_execute(args[1]);
+        }
+    }
 }
 
 bool validate_user_buffer(void *pointer, size_t length, bool check_writable) {
@@ -191,49 +248,41 @@ bool validate_user_buffer(void *pointer, size_t length, bool check_writable) {
 }
 
 bool validate_user_string(const char *string) {
-    // 0. Preliminary Check (Required for safety and to handle NULL/Kernel addresses)
-    if (string == NULL || !is_user_vaddr(string)) {
+    for (const char *ptr = string; ; ptr++) {
+        if (!is_user_vaddr(ptr)) {
+            return false;
+        }
+
+        if (pagedir_get_page(thread_current()->pagedir, pg_round_down(ptr)) == NULL) {
+            return false;
+        }
+        if (*ptr == '\0') {
+            return true;
+        }
+    }
+}
+
+bool is_valid_user_read(const void *uaddr, size_t size) {
+    const char *ptr = (const char *)uaddr;
+    const char *end_ptr = ptr + size;
+    if (!is_user_vaddr(ptr)) {
+        return false;
+    }
+    const char *page_start = (const char *)pg_round_down(ptr);
+    
+    for (const char *curr_page = page_start; curr_page < end_ptr; curr_page += PGSIZE) {
+        
+        if (!is_user_vaddr(curr_page)) {
+             return false;
+        }
+        if (pagedir_get_page(thread_current()->pagedir, curr_page) == NULL) {
+            return false;
+        }
+    }
+
+    if (!is_user_vaddr(end_ptr)) {
         return false;
     }
 
-    uint32_t *pd = thread_current()->pagedir;
-    const char *current_page_start = string;
-
-    while (true) {
-        // 1. Check if the current page is mapped (present).
-        // This is the expensive check, done only at the start of a new page.
-        if (pagedir_get_page(pd, (void *)current_page_start) == NULL) {
-            return false; // Unmapped page found.
-        }
-
-        // 2. Iterate through bytes in the current mapped page to find '\0'.
-        // We use the pointer (string) and search until we hit the next page boundary,
-        // which is pg_round_down(string) + PGSIZE.
-        const char *page_end = (const char *)pg_round_down((uintptr_t)current_page_start) + PGSIZE;
-        
-        // This loop searches from the start of the *unsearched* portion of the page.
-        // It's safer to use an index within the page boundaries to avoid overshooting.
-        
-        for (const char *p = current_page_start; p < page_end; p++) {
-            // Check for kernel boundary again (redundant but safe after pointer arithmetic)
-            if (!is_user_vaddr(p)) {
-                return false; // String runs into kernel space mid-page.
-            }
-
-            // Check the byte (this read is now safe because we called pagedir_get_page above)
-            if (*p == '\0') {
-                return true; // Found the terminator on a validated page!
-            }
-        }
-        
-        // 3. Prepare for next iteration (Advance to the next page).
-        current_page_start = page_end;
-
-        // 4. Check if the next page is still below PHYS_BASE.
-        if (!is_user_vaddr(current_page_start)) {
-            return false; // String runs off user memory.
-        }
-        
-        // If we reach here, the string spans the whole page, and we proceed to validate the next page in the loop.
-    }
+    return true;
 }

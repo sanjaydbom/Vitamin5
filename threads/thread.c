@@ -423,6 +423,8 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     for(int i = 0; i < 128; i++) {
         t->fdt[0] = NULL;
     }
+    t->parent_process = NULL;
+    list_init(&(t->child_processes));
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -528,3 +530,40 @@ static tid_t allocate_tid(void) {
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
+
+struct thread* child_thread_create(const char *name, int priority, thread_func *function,
+                    void *aux, bool idk) {
+    struct thread *t;
+    struct kernel_thread_frame *kf;
+    struct switch_entry_frame *ef;
+    struct switch_threads_frame *sf;
+    tid_t tid;
+
+    ASSERT(function != NULL);
+
+    /* Allocate thread. */
+    t = palloc_get_page(PAL_ZERO);
+    if (t == NULL)
+        return NULL;
+
+    /* Initialize thread. */
+    init_thread(t, name, priority);
+    tid = t->tid = allocate_tid();
+
+    /* Stack frame for kernel_thread(). */
+    kf = alloc_frame(t, sizeof *kf);
+    kf->eip = NULL;
+    kf->function = function;
+    kf->aux = aux;
+
+    /* Stack frame for switch_entry(). */
+    ef = alloc_frame(t, sizeof *ef);
+    ef->eip = (void (*)(void)) kernel_thread;
+
+    /* Stack frame for switch_threads(). */
+    sf = alloc_frame(t, sizeof *sf);
+    sf->eip = switch_entry;
+    sf->ebp = 0;
+
+    return t;
+}

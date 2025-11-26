@@ -25,6 +25,17 @@ typedef int tid_t;
 #define PRI_MIN 0 /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63 /* Highest priority. */
+typedef int pid_t;
+struct child_struct {
+   pid_t pid;
+   int exit_status;
+   struct semaphore lock;
+   struct semaphore load_lock;
+   struct list_elem elem;
+   bool is_alive;
+   bool is_waited_on;
+   bool load;
+};
 
 /* A kernel thread or user process.
 
@@ -92,6 +103,8 @@ struct thread {
     struct list_elem allelem; /* List element for all threads list. */
 
     struct file *fdt[128];
+    struct list child_processes;
+    struct child_struct* parent_process;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
@@ -140,5 +153,7 @@ int thread_get_nice(void);
 void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
+struct thread* child_thread_create(const char *name, int priority, thread_func *function,
+                    void *aux, bool idk);
 
 #endif /* threads/thread.h */
