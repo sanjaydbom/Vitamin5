@@ -164,7 +164,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     thread_current()->parent_process->is_alive = false;
                     sema_up(&(thread_current()->parent_process->lock));
                 }
-            lock_release(&filesys_lock);
+                lock_release(&filesys_lock);
                 thread_exit();
             }
         }
@@ -299,6 +299,8 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 bool validate_user_buffer(void *pointer, size_t length, bool check_writable) {
     void* addr;
     for(int i = 0; i <= length; i += PGSIZE) {
+        if(!is_user_vaddr(pointer+i))
+            return false;
         addr = pagedir_get_page(thread_current()->pagedir, pg_round_down(pointer + i));
         if(addr == NULL)
             return false;
