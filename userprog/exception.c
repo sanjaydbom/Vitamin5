@@ -6,6 +6,8 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/gdt.h"
+#include "threads/synch.h"
+extern struct lock filesys_lock;
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -84,6 +86,16 @@ static void kill(struct intr_frame *f) {
         printf("%s: dying due to interrupt %#04x (%s).\n", thread_name(),
                f->vec_no, intr_name(f->vec_no));
         intr_dump_frame(f);
+
+        if (thread_current()->parent_process != NULL) {
+            thread_current()->parent_process->exit_status = -1;
+            thread_current()->parent_process->is_alive = false;
+            sema_up(&(thread_current()->parent_process->lock));
+        }
+
+        if (lock_held_by_current_thread(&filesys_lock)) {
+            lock_release(&filesys_lock);
+        }
         printf("%s: exit(-1)\n", thread_current()->name);
         thread_exit();
 

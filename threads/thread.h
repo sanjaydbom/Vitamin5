@@ -106,6 +106,8 @@ struct thread {
     struct list child_processes;
     struct child_struct* parent_process;
 
+    struct file* executable;
+
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
 

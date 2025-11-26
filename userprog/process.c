@@ -21,6 +21,8 @@
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 
+extern struct lock filesys_lock;
+
 static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
@@ -32,30 +34,71 @@ static bool load(const char *cmdline, void (**eip)(void), void **esp);
 tid_t process_execute(const char *file_name) {
     char *fn_copy;
     tid_t tid;
+    struct child_struct *cs = NULL;
+    struct thread *t = thread_current(); // The root kernel thread
 
-    sema_init(&temporary, 0);
-    /* Make a copy of FILE_NAME.
-       Otherwise there's a race between the caller and load(). */
-    fn_copy = palloc_get_page(0);
-    if (fn_copy == NULL)
+    // 1. Allocate and initialize the child status structure (cs)
+    cs = (struct child_struct *)malloc(sizeof(struct child_struct));
+    if (cs == NULL) {
         return TID_ERROR;
+    }
+    
+    // NOTE: You must include "threads/malloc.h" if it's not already in process.c
+    cs->pid = TID_ERROR; // Temporary PID
+    cs->exit_status = -1;
+    sema_init(&(cs->lock), 0);
+    sema_init(&(cs->load_lock), 0);
+    cs->is_alive = true;
+    cs->is_waited_on = false;
+    cs->load = false;
+    
+    /* Make a copy of FILE_NAME. */
+    fn_copy = palloc_get_page(0);
+    if (fn_copy == NULL) {
+        free(cs);
+        return TID_ERROR;
+    }
     strlcpy(fn_copy, file_name, PGSIZE);
 
     char *save_ptr;
     char *exec_name = palloc_get_page(0);
-    if(exec_name == NULL) 
+    if(exec_name == NULL) {
+        palloc_free_page(fn_copy);
+        free(cs);
         return TID_ERROR;
-
+    }
     strlcpy(exec_name, file_name, PGSIZE);
     exec_name = strtok_r(exec_name, " ", &save_ptr);
 
-    tid = thread_create(exec_name, PRI_DEFAULT, start_process, fn_copy);
+    // Create the new thread
+    struct thread *child_thread = child_thread_create(exec_name, PRI_DEFAULT, start_process, fn_copy, false);
 
     palloc_free_page(exec_name);
-    if (tid == TID_ERROR){
+
+    if (child_thread == NULL) {
         palloc_free_page(fn_copy);
+        free(cs);
+        return TID_ERROR;
     }
-    return tid;
+    child_thread->parent_process = cs; 
+    cs->pid = tid; 
+
+    // Add to the root thread's child list for tracking/cleanup
+    list_push_back(&(t->child_processes), &(cs->elem));
+    thread_unblock(child_thread);
+    
+    // Wait for the child to finish loading (part of EXEC syscall spec)
+    sema_down(&(cs->load_lock));
+
+    // Handle load failure before returning
+    if (cs->load == false) {
+        // Cleanup the status struct if load failed
+        list_remove(&(cs->elem));
+        free(cs);
+        return TID_ERROR;
+    }
+    
+    return cs->pid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -174,13 +217,48 @@ static void start_process(void *file_name_) {
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int process_wait(tid_t child_tid UNUSED) {
-    sema_down(&temporary);
-    return 0;
+    struct thread* cur = thread_current();
+    struct list_elem *e;
+    
+    // Search for the child in the current thread's list
+    for (e = list_begin (&(cur->child_processes)); 
+         e != list_end (&(cur->child_processes)); 
+         e = list_next (e))
+    {
+        struct child_struct* g = list_entry (e, struct child_struct, elem);
+        if(g->pid == child_tid)
+        {
+            if(g->is_waited_on){
+                return -1; // Already waited on
+            }
+            
+            g->is_waited_on = true;
+
+            // Wait only if the child is still alive
+            if (g->is_alive) {
+                sema_down(&(g->lock));
+            }
+            
+            // Retrieve status
+            int exit_status = g->exit_status;
+            
+            // Cleanup: remove from list and free the dynamically allocated structure
+            list_remove(&(g->elem));
+            free(g);
+            
+            return exit_status;
+        }
+    }
+    
+    return -1; // PID not found or not a direct child
 }
 
 /* Free the current process's resources. */
 void process_exit(void) {
     struct thread *cur = thread_current();
+    if (lock_held_by_current_thread(&filesys_lock)) {
+        lock_release(&filesys_lock);
+    }
     if(cur->executable != NULL){
         file_close(cur->executable);
     }
@@ -218,7 +296,6 @@ void process_exit(void) {
         pagedir_activate(NULL);
         pagedir_destroy(pd);
     }
-    sema_up(&temporary);
 }
 
 /* Sets up the CPU for running user code in the current

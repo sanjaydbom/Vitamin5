@@ -10,15 +10,18 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 #include "filesys/filesys.h"
 
 #include "devices/shutdown.h"
 
+struct lock filesys_lock;
 static void syscall_handler(struct intr_frame *);
 
 void syscall_init(void) {
     intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+    lock_init(&filesys_lock);
 }
 bool validate_user_buffer(void *pointer, size_t length, bool check_writable);
 bool validate_user_string(const char *string);
@@ -53,12 +56,16 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             thread_current()->parent_process->is_alive = false;
             sema_up(&(thread_current()->parent_process->lock));
         }
+        if (lock_held_by_current_thread(&filesys_lock)) { 
+            lock_release(&filesys_lock);
+        }
         thread_exit();
     }
     else if (args[0] == SYS_INCREMENT) {
         f->eax = args[1] + 1;
     }
     else if(args[0] == SYS_CREATE) {
+        lock_acquire(&filesys_lock);
         if(validate_user_string(args[1]))
             f->eax = filesys_create(args[1], args[2]);
         else {
@@ -69,11 +76,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 thread_current()->parent_process->is_alive = false;
                 sema_up(&(thread_current()->parent_process->lock));
             }
+            lock_release(&filesys_lock);
             thread_exit();
         }
-            
+        lock_release(&filesys_lock);   
     }
     else if(args[0] == SYS_REMOVE) {
+        lock_acquire(&filesys_lock);
         if(validate_user_string(args[1]))
             f->eax = filesys_remove(args[1]);
         else {
@@ -84,10 +93,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 thread_current()->parent_process->is_alive = false;
                 sema_up(&(thread_current()->parent_process->lock));
             }
+            lock_release(&filesys_lock);
             thread_exit();
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_OPEN) {
+        lock_acquire(&filesys_lock);
         if(validate_user_string(args[1])) {
             struct thread* current_thread = thread_current();
             bool valid = false;
@@ -115,10 +127,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 thread_current()->parent_process->is_alive = false;
                 sema_up(&(thread_current()->parent_process->lock));
             }
+            lock_release(&filesys_lock);
             thread_exit();
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_FILESIZE) {
+        lock_acquire(&filesys_lock);
         if(args[1] < 2 || args[1] > 129)
             f->eax = -1;
 
@@ -127,8 +142,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             f->eax = -1;
         else
             f->eax = file_length(current_thread->fdt[args[1] - 2]);
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_READ) {
+        lock_acquire(&filesys_lock);
         if(args[1] -2 < 0 || args[1] - 2 > 127)
             f->eax = -1;
         else {
@@ -147,11 +164,14 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     thread_current()->parent_process->is_alive = false;
                     sema_up(&(thread_current()->parent_process->lock));
                 }
+            lock_release(&filesys_lock);
                 thread_exit();
             }
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_WRITE) {
+        lock_acquire(&filesys_lock);
         if(args[1] == 1) {
             putbuf(args[2], args[3]);
             f->eax = args[3];
@@ -175,12 +195,15 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                         thread_current()->parent_process->is_alive = false;
                         sema_up(&(thread_current()->parent_process->lock));
                     }
+                    lock_release(&filesys_lock);
                     thread_exit();
                 }
             }
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_SEEK) {
+        lock_acquire(&filesys_lock);
         if(args[1] -2 < 0 || args[1] - 2 > 127)
             f->eax = -1;
         struct thread* current_thread = thread_current();
@@ -190,8 +213,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             file_seek(current_thread->fdt[args[1]-2], args[2]);
             f->eax = NULL;
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_TELL) {
+        lock_acquire(&filesys_lock);
         if(args[1] -2 < 0 || args[1] - 2 > 127)
             f->eax = -1;
         struct thread* current_thread = thread_current();
@@ -199,8 +224,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             f->eax = -1;
         else
             f->eax = file_tell(current_thread->fdt[args[1]-2]);
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_CLOSE) {
+        lock_acquire(&filesys_lock);
         if(args[0] == 0 || args[0] == 1)
             ;
         else {
@@ -217,11 +244,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 }
             }
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_HALT) {
         shutdown_power_off();
     }
     else if(args[0] == SYS_EXEC) {
+        lock_acquire(&filesys_lock);
         if(!validate_user_string(args[1])){
             f->eax = -1;
             printf("%s: exit(-1)\n", thread_current()->name);
@@ -230,10 +259,12 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 thread_current()->parent_process->is_alive = false;
                 sema_up(&(thread_current()->parent_process->lock));
             }
+            lock_release(&filesys_lock);
             thread_exit();
         } else {
             f->eax = child_process_execute(args[1]);
         }
+        lock_release(&filesys_lock);
     }
     else if(args[0] == SYS_WAIT) {
         struct thread* ct = thread_current();

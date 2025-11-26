@@ -425,6 +425,7 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     }
     t->parent_process = NULL;
     list_init(&(t->child_processes));
+    t->executable = NULL;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
