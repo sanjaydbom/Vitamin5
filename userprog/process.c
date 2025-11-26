@@ -186,6 +186,7 @@ static void start_process(void *file_name_) {
     }
 
     /* If load failed, quit. */
+    palloc_free_page(fn_copy);
     palloc_free_page(file_name);
     if (!success){
         printf("%s: exit(-1)\n", thread_current()->name);
