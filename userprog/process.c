@@ -572,6 +572,5 @@ tid_t child_process_execute(const char *file_name) {
         {
             return TID_ERROR;
         }
-
-        return child_thread->tid;
+        return cs->pid;
 }

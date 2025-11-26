@@ -29,7 +29,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     if (!is_valid_user_read(args, sizeof(uint32_t) * 2)) {
         printf("%s: exit(-1)\n", thread_current()->name);
         if(thread_current()->parent_process != NULL){
-            thread_current()->parent_process->exit_status = f->eax;
+            thread_current()->parent_process->exit_status = -1;
             thread_current()->parent_process->is_alive = false;
             sema_up(&(thread_current()->parent_process->lock));
         }
@@ -234,6 +234,32 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         } else {
             f->eax = child_process_execute(args[1]);
         }
+    }
+    else if(args[0] == SYS_WAIT) {
+        struct thread* ct = thread_current();
+        for (struct list_elem* e = list_begin (&(ct->child_processes)); e != list_end (&(ct->child_processes)); e = list_next (e)){
+            struct child_struct* g = list_entry (e, struct child_struct, elem);
+            if(g->pid == args[1])
+            {
+                if(g->is_waited_on){
+                    f->eax = -1;
+                    return;
+                }
+                else if(!g->is_alive){
+                    f->eax = g->exit_status;
+                    list_remove(&(g->elem));
+                    return;
+                }
+                else {
+                    g->is_waited_on = true;
+                    sema_down(&(g->lock));
+                    f->eax = g->exit_status;
+                    list_remove(&(g->elem));
+                    return;
+                }
+            }
+        }
+        f->eax = -1;
     }
 }
 
